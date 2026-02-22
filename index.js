@@ -4,7 +4,9 @@ import {
   getAuth, 
   signInAnonymously, 
   signInWithCustomToken, 
-  onAuthStateChanged 
+  onAuthStateChanged,
+  GoogleAuthProvider,
+  signInWithPopup
 } from 'firebase/auth';
 import { 
   getStorage, 
@@ -253,7 +255,7 @@ export default function App() {
   useEffect(() => {
     const storedEmail = localStorage.getItem('adminEmail');
     const storedRole = localStorage.getItem('adminRole');
-      
+     
     if (storedEmail && storedRole) {
       setUserEmail(storedEmail);
       setUserRole(storedRole);
@@ -271,7 +273,7 @@ export default function App() {
       }
     };
     initAuth();
-      
+     
     return onAuthStateChanged(auth, setUser);
   }, []);
 
@@ -321,7 +323,7 @@ export default function App() {
   const handleLogin = (emailInput) => {
     const email = emailInput.toLowerCase().trim();
     const foundUser = authorizedUsers.find(u => u.email === email);
-      
+     
     if (email === HOST_EMAIL.toLowerCase()) {
       setUserRole('host'); setUserEmail(email);
       localStorage.setItem('adminEmail', email); 
@@ -342,6 +344,35 @@ export default function App() {
     localStorage.removeItem('adminEmail');
     localStorage.removeItem('adminRole');
     setShowAdminPanel(false); setActiveTab('home');
+  };
+
+  const handleGoogleLogin = async () => {
+    const provider = new GoogleAuthProvider();
+    try {
+      const result = await signInWithPopup(auth, provider);
+      const email = result.user.email.toLowerCase();
+      
+      // ตรวจสอบสิทธิ์จากฐานข้อมูล users ที่เรามีอยู่เดิม
+      const foundUser = authorizedUsers.find(u => u.email === email);
+      const isHost = email === HOST_EMAIL.toLowerCase();
+
+      if (isHost || foundUser) {
+        const role = isHost ? 'host' : foundUser.role;
+        setUserRole(role);
+        setUserEmail(email);
+        localStorage.setItem('adminEmail', email);
+        localStorage.setItem('adminRole', role);
+        setShowLoginModal(false);
+        setShowAdminPanel(true);
+      } else {
+        // ถ้าไม่มีสิทธิ์ ให้สั่ง Sign out ออกทันที
+        await auth.signOut();
+        alert('บัญชี Gmail นี้ไม่มีสิทธิ์เข้าใช้งานระบบ');
+      }
+    } catch (error) {
+      console.error("Login Error:", error);
+      alert('เกิดข้อผิดพลาดในการล็อคอิน');
+    }
   };
 
   const handleLocationSelect = (type, value) => {
@@ -395,7 +426,7 @@ export default function App() {
           }
         `}
       </style>
-        
+       
       {/* Navigation */}
       <nav className="bg-white shadow-md sticky top-0 z-50 border-b-4 border-[#116900]">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
@@ -509,7 +540,7 @@ export default function App() {
       </footer>
 
       {/* Modals */}
-      {showLoginModal && <LoginModal onClose={() => setShowLoginModal(false)} onLogin={handleLogin} />}
+      {showLoginModal && <LoginModal onClose={() => setShowLoginModal(false)} onLoginWithGoogle={handleGoogleLogin} />}
       
       {showAdminPanel && (
         <AdminPanel 
@@ -550,7 +581,6 @@ function SalePage({ property, companyInfo, onBack }) {
          <div className="lg:col-span-2 space-y-8">
             <div className="bg-white p-4 rounded-2xl shadow-sm border border-stone-200">
                <div className="h-[400px] md:h-[500px] bg-stone-100 rounded-xl overflow-hidden mb-4 relative group">
-                  {/* ไม่ใส่ loading lazy สำหรับรูปใหญ่สุด เพื่อให้โหลดไวที่สุดเมื่อกดเข้ามาดู */}
                   <img src={images[activeImg]} className="w-full h-full object-cover transition duration-500" alt="Main" />
                   {images.length > 1 && (
                     <>
@@ -572,7 +602,7 @@ function SalePage({ property, companyInfo, onBack }) {
                <div className="flex gap-2 overflow-x-auto pb-2">
                   {images.map((img, idx) => (
                     <button key={idx} onClick={() => setActiveImg(idx)} className={`w-20 h-20 flex-shrink-0 rounded-lg overflow-hidden border-2 ${activeImg === idx ? 'border-[#116900]' : 'border-transparent'}`}>
-                       <img src={img} className="w-full h-full object-cover" alt={`Thumb ${idx}`} loading="lazy" decoding="async" />
+                       <img src={img} className="w-full h-full object-cover" alt={`Thumb ${idx}`} />
                     </button>
                   ))}
                </div>
@@ -678,7 +708,7 @@ function SalePage({ property, companyInfo, onBack }) {
             <div className="bg-white p-6 rounded-2xl shadow-lg border border-stone-200 sticky top-24">
                <div className="flex items-center gap-4 mb-6 pb-6 border-b">
                   <div className="w-16 h-16 bg-white rounded-full overflow-hidden flex-shrink-0 border border-stone-200">
-                      {companyInfo?.logoUrl ? <img src={companyInfo.logoUrl} className="w-full h-full object-cover" alt="Logo" /> : null}
+                      {companyInfo?.logoUrl ? <img src={companyInfo.logoUrl} className="w-full h-full object-cover" alt="Logo"/> : null}
                   </div>
                   <div>
                       <h3 className="font-bold text-lg">{companyInfo?.name || 'Startup Up Real Estate'}</h3>
@@ -791,18 +821,7 @@ function CategoryCarousel({ title, properties, onSelect }) {
   );
 }
 
-// -------------------------------------------------------------
-// * UPDATE: เพิ่มระบบ Pagination (Load More) แบบ Client-Side ที่นี่
-// เพื่อรองรับ 100 รายการ โดยไม่ทำให้ระบบค้นหา (Search Params) พัง
-// -------------------------------------------------------------
 function PropertiesList({ properties, searchParams, onSelectProp }) {
-  const [visibleCount, setVisibleCount] = useState(12);
-
-  // รีเซ็ตจำนวนที่แสดงเมื่อมีการเปลี่ยนเงื่อนไขการค้นหา
-  useEffect(() => {
-    setVisibleCount(12);
-  }, [searchParams]);
-
   let displayProps = properties.filter(p => p.badge !== 'Sold Out');
   let title = 'รายการขายทั้งหมด';
 
@@ -814,8 +833,10 @@ function PropertiesList({ properties, searchParams, onSelectProp }) {
       displayProps = properties.filter(p => p.district === searchParams.value || (p.subdistrict === 'คูคต' && searchParams.value === 'ลำลูกกา')); // Handle special case
       title = `ทำเล: ${searchParams.value}`;
   } else if (searchParams?.type === 'subdistrict') {
+      // FIX: ไม่ตัดชื่ออำเภอออก เพื่อให้ค้นหาแบบ Full text หรือ context match ได้ถูกต้อง
       const keyword = searchParams.value.trim(); 
       displayProps = properties.filter(p => {
+        // สร้าง search text ที่รวมทั้ง อำเภอ และ ตำบล
         const fullAddress = `${p.district} ${p.subdistrict} ${p.project_name} ${p.soi}`.toLowerCase();
         const searchText = keyword.toLowerCase();
         return fullAddress.includes(searchText) || p.highlights?.toLowerCase().includes(searchText);
@@ -823,44 +844,21 @@ function PropertiesList({ properties, searchParams, onSelectProp }) {
       title = `โซน: ${searchParams.value}`;
   }
 
-  // ตัวแปรสำหรับ Pagination
-  const currentDisplay = displayProps.slice(0, visibleCount);
-  const hasMore = visibleCount < displayProps.length;
-
-  const handleLoadMore = () => {
-    setVisibleCount(prev => prev + 12);
-  };
-
   return (
     <div className="max-w-7xl mx-auto px-4 py-12">
       <h2 className="text-3xl font-bold text-stone-800 mb-8 flex items-center gap-3">
         <Home className="text-[#116900]" /> 
-        {title} <span className="text-sm font-normal text-stone-500 mt-2">({displayProps.length} รายการ)</span>
+        {title}
       </h2>
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-        {currentDisplay.length > 0 ? currentDisplay.map(p => (
+        {displayProps.length > 0 ? displayProps.map(p => (
           <PropertyCard key={p.id} data={p} onClick={() => onSelectProp(p)} />
         )) : <p className="text-stone-500 col-span-3 text-center py-10 bg-stone-50 rounded-xl">ไม่พบรายการในหมวดหมู่นี้</p>}
       </div>
-
-      {/* ปุ่ม Load More แสดงเฉพาะเมื่อมีข้อมูลเหลือ */}
-      {hasMore && (
-        <div className="text-center mt-12">
-          <button 
-            onClick={handleLoadMore} 
-            className="bg-white border-2 border-[#116900] text-[#116900] hover:bg-[#116900] hover:text-white px-8 py-3 rounded-xl font-bold transition duration-300 shadow-sm"
-          >
-            โหลดข้อมูลเพิ่มเติม
-          </button>
-        </div>
-      )}
     </div>
   );
 }
 
-// -------------------------------------------------------------
-// * UPDATE: เพิ่ม loading="lazy" และ decoding="async" ใน <img>
-// -------------------------------------------------------------
 function PropertyCard({ data, onClick }) {
   const img = (data.images && data.images.length > 0) ? data.images[0] : data.imageUrl;
    
@@ -874,8 +872,6 @@ function PropertyCard({ data, onClick }) {
           src={img || "https://placehold.co/600x400?text=No+Image"} 
           alt={data.project_name} 
           className="w-full h-full object-cover group-hover:scale-105 transition duration-700"
-          loading="lazy" 
-          decoding="async"
         />
         {data.badge && (
            <div className={`absolute top-4 left-4 px-3 py-1 rounded-lg font-bold shadow-lg z-10 text-xs text-white ${data.badge === 'Sold Out' ? 'bg-stone-800' : 'bg-red-600'}`}>
@@ -916,13 +912,10 @@ function LocationSection({ onSelectLocation }) {
         {LOCATIONS_DATA.map((loc, idx) => (
           <div key={idx} onClick={() => onSelectLocation && onSelectLocation('district', loc.area)} className="bg-white rounded-2xl overflow-hidden shadow-lg border border-stone-100 group hover:shadow-xl transition cursor-pointer">
             <div className="h-40 overflow-hidden relative">
-               {/* UPDATE: Added loading lazy */}
                <img 
                 src={loc.img} 
                 className="w-full h-full object-cover group-hover:scale-105 transition duration-700" 
                 alt={loc.area}
-                loading="lazy"
-                decoding="async"
               />
               <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                  <h3 className="text-2xl font-bold text-white">{loc.area}</h3>
@@ -1044,8 +1037,7 @@ function PortfolioSection({ companyInfo, properties }) {
               {soldOutProperties.map(p => (
                 <div key={p.id} className="bg-white p-4 rounded-xl shadow border">
                    <div className="h-40 bg-stone-200 rounded mb-2 overflow-hidden relative">
-                      {/* UPDATE: Added loading lazy */}
-                      <img src={p.images?.[0] || p.imageUrl} className="w-full h-full object-cover grayscale" loading="lazy" decoding="async"/>
+                      <img src={p.images?.[0] || p.imageUrl} className="w-full h-full object-cover grayscale"/>
                       <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-white font-bold text-xl uppercase tracking-wider">Sold Out</div>
                    </div>
                    <p className="font-bold text-stone-700 truncate">{p.project_name}</p>
@@ -1064,8 +1056,7 @@ function PortfolioSection({ companyInfo, properties }) {
                {yearGroup.images.map((img, i) => (
                   <div key={i} className="bg-white p-2 rounded-xl shadow border">
                       <div className="h-40 bg-stone-200 rounded overflow-hidden relative">
-                         {/* UPDATE: Added loading lazy */}
-                         <img src={img} className="w-full h-full object-cover" loading="lazy" decoding="async"/>
+                         <img src={img} className="w-full h-full object-cover"/>
                       </div>
                   </div>
                ))}
@@ -1081,8 +1072,7 @@ function PortfolioSection({ companyInfo, properties }) {
              {oldPortfolioImages.map((img, idx) => (
                 <div key={`manual-${idx}`} className="bg-white p-4 rounded-xl shadow border">
                    <div className="h-40 bg-stone-200 rounded mb-2 overflow-hidden relative">
-                      {/* UPDATE: Added loading lazy */}
-                      <img src={img} className="w-full h-full object-cover" loading="lazy" decoding="async"/>
+                      <img src={img} className="w-full h-full object-cover"/>
                    </div>
                    <p className="font-bold text-stone-700">ผลงานการขาย</p>
                 </div>
@@ -1819,35 +1809,32 @@ function MobileNavBtn({ onClick, children }) {
   );
 }
 
-function LoginModal({ onClose, onLogin }) {
-  const [email, setEmail] = useState('');
+function LoginModal({ onClose, onLoginWithGoogle }) {
   return (
     <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4 backdrop-blur-sm animate-in fade-in">
-      <div className="bg-white rounded-2xl shadow-xl max-w-md w-full overflow-hidden">
-        <div className="p-6">
-          <div className="flex justify-between items-center mb-6">
-             <h3 className="text-xl font-bold text-stone-800">เข้าสู่ระบบผู้ดูแล</h3>
-             <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={24}/></button>
+      <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full overflow-hidden">
+        <div className="p-8 text-center">
+          <div className="flex justify-end mb-2">
+            <button onClick={onClose} className="text-stone-400 hover:text-stone-600"><X size={24}/></button>
           </div>
-          <div className="space-y-4">
-             <div>
-                <label className="block text-sm font-bold text-stone-600 mb-1">อีเมล</label>
-                <input
-                  type="email"
-                  className="input-modern w-full"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoFocus
-                />
-             </div>
-             <button
-               onClick={() => onLogin(email)}
-               className="btn-primary w-full justify-center"
-             >
-               เข้าสู่ระบบ
-             </button>
+          
+          <div className="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4">
+             <ShieldCheck size={32} className="text-[#116900]" />
           </div>
+          
+          <h3 className="text-xl font-bold text-stone-800 mb-2">เข้าสู่ระบบหลังบ้าน</h3>
+          <p className="text-sm text-stone-500 mb-8">เฉพาะผู้ที่ได้รับอนุญาตเท่านั้น</p>
+          
+          <button
+            onClick={onLoginWithGoogle}
+            className="w-full flex items-center justify-center gap-3 bg-white border border-stone-300 py-3 px-4 rounded-xl font-bold text-stone-700 hover:bg-stone-50 transition shadow-sm"
+          >
+            <img className="w-5 h-5" alt="google" 
+              style={{filter: 'none'}}
+              src="https://fonts.gstatic.com/s/i/productlogos/googleg/v6/24px.svg" 
+            />
+            เข้าสู่ระบบด้วย Google
+          </button>
         </div>
       </div>
     </div>
